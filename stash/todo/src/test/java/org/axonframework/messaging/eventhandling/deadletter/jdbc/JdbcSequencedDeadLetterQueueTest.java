@@ -120,7 +120,7 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
             closeQuietly(connection);
         }
         // Construct new DLQ
-        jdbcDeadLetterQueue.createSchema(new GenericDeadLetterTableFactory());
+        joinAndUnwrap(jdbcDeadLetterQueue.createSchema(new GenericDeadLetterTableFactory()));
     }
 
     @AfterEach
