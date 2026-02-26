@@ -140,7 +140,7 @@ class JdbcDeadLetteringEventIntegrationTest extends DeadLetteringEventIntegratio
             closeQuietly(connection);
         }
         // Construct new DLQ
-        joinAndUnwrap(jdbcDeadLetterQueue.createSchema(new GenericDeadLetterTableFactory()));
+        joinAndUnwrap(jdbcDeadLetterQueue.createSchema(new GenericDeadLetterTableFactory(), null));
     }
 
     @Test

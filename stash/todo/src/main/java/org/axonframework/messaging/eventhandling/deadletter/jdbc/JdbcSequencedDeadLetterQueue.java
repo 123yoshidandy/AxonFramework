@@ -154,11 +154,14 @@ public class JdbcSequencedDeadLetterQueue<E extends EventMessage> implements Seq
      * @param tableFactory The factory constructing the {@link java.sql.PreparedStatement} to construct a
      *                     {@link DeadLetter} entry table based on the
      *                     {@link Builder#schema(DeadLetterSchema) configured} {@link DeadLetterSchema}.
+     * @param context      The {@link ProcessingContext} in which the schema will be created. May be {@code null};
+     *                     when provided, the connection executor is obtained from the context.
      * @return A {@link CompletableFuture} that completes when the schema has been created. Completes exceptionally
      * with a {@link JdbcException} if the table or indices could not be created.
      */
-    public CompletableFuture<Void> createSchema(DeadLetterTableFactory tableFactory) {
-        return connectionExecutor(null).accept(connection -> {
+    public CompletableFuture<Void> createSchema(DeadLetterTableFactory tableFactory,
+                                                @Nullable ProcessingContext context) {
+        return connectionExecutor(context).accept(connection -> {
             Statement tableStatement = tableFactory.createTableStatement(connection, schema);
             try {
                 tableStatement.executeBatch();
