@@ -307,7 +307,15 @@ public class JdbcSequencedDeadLetterQueue<E extends EventMessage> implements Seq
         return FutureUtils.runFailing(() -> {
             String sequenceId = toStringSequenceIdentifier(sequenceIdentifier);
             logger.debug("Validating existence of sequence identifier [{}].", sequenceId);
-            return sequenceSize(sequenceId, context).thenApply(result -> result > 0);
+            return connectionExecutor(context)
+                    .apply(connection -> executeQuery(
+                            connection,
+                            c -> statementFactory.containsStatement(c, processingGroup, sequenceId),
+                            resultSet -> nextAndExtract(resultSet, 1, Long.class, 0L) > 0L,
+                            e -> new JdbcException("Failed to validate whether there are letters "
+                                                           + "present for sequence [" + sequenceId + "]", e),
+                            false
+                    ));
         });
     }
 
