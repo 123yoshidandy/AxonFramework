@@ -18,10 +18,10 @@ package org.axonframework.messaging.eventhandling.deadletter.jdbc;
 
 import org.axonframework.common.AxonConfigurationException;
 import org.axonframework.common.IdentifierFactory;
+import org.axonframework.common.jdbc.SingleConnectionTransactionalExecutor;
 import org.axonframework.conversion.json.JacksonConverter;
 import org.axonframework.messaging.core.Context;
 import org.axonframework.messaging.core.LegacyResources;
-import org.axonframework.messaging.core.unitofwork.transaction.jdbc.JdbcTransactionalExecutorProvider;
 import org.axonframework.messaging.deadletter.DeadLetter;
 import org.axonframework.messaging.deadletter.DeadLetterWithContext;
 import org.axonframework.messaging.deadletter.GenericDeadLetter;
@@ -40,7 +40,6 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicLong;
-import javax.sql.DataSource;
 
 import static org.axonframework.common.DateTimeUtils.formatInstant;
 import static org.axonframework.common.DateTimeUtils.parseInstant;
@@ -59,9 +58,8 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
     private static final int MAX_SEQUENCES_AND_SEQUENCE_SIZE = 64;
     private static final String TEST_PROCESSING_GROUP = "some-processing-group";
 
-    private DataSource dataSource;
-    // Sentinel connection to keep HSQLDB in-memory database alive across operations
-    private Connection sentinelConnection;
+    private Connection connection;
+    private SingleConnectionTransactionalExecutor executor;
     private JdbcSequencedDeadLetterQueue<EventMessage> jdbcDeadLetterQueue;
     private final JacksonConverter jacksonConverter = new JacksonConverter();
     private final DelegatingEventConverter eventConverter = new DelegatingEventConverter(jacksonConverter);
@@ -71,23 +69,22 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
 
     @Override
     protected SequencedDeadLetterQueue<EventMessage> buildTestSubject() {
-        dataSource = dataSource();
+        JDBCDataSource dataSource = new JDBCDataSource();
+        dataSource.setUrl("jdbc:hsqldb:mem:axontest");
+        dataSource.setUser("sa");
+        dataSource.setPassword("");
         try {
-            sentinelConnection = dataSource.getConnection();
+            connection = dataSource.getConnection();
         } catch (SQLException e) {
-            throw new IllegalStateException("Unable to open sentinel connection", e);
+            throw new IllegalStateException("Unable to open connection", e);
         }
-        // Use a provider that ignores ProcessingContext and always creates a new DataSource-based executor.
-        // In production, ProcessingContext would carry a ConnectionExecutor resource, but in tests the
-        // StubProcessingContext doesn't, so we bypass that requirement.
-        JdbcTransactionalExecutorProvider baseProvider = new JdbcTransactionalExecutorProvider(dataSource);
+        executor = new SingleConnectionTransactionalExecutor(connection);
+
         jdbcDeadLetterQueue = JdbcSequencedDeadLetterQueue.<EventMessage>builder()
                                                           .processingGroup(TEST_PROCESSING_GROUP)
                                                           .maxSequences(MAX_SEQUENCES_AND_SEQUENCE_SIZE)
                                                           .maxSequenceSize(MAX_SEQUENCES_AND_SEQUENCE_SIZE)
-                                                          .transactionalExecutorProvider(
-                                                                  pc -> baseProvider.getTransactionalExecutor(null)
-                                                          )
+                                                          .transactionalExecutorProvider(pc -> executor)
                                                           .schema(schema)
                                                           .eventConverter(eventConverter)
                                                           .genericConverter(jacksonConverter)
@@ -95,37 +92,16 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
         return jdbcDeadLetterQueue;
     }
 
-    private DataSource dataSource() {
-        JDBCDataSource dataSource = new JDBCDataSource();
-        dataSource.setUrl("jdbc:hsqldb:mem:axontest");
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
+    @SuppressWarnings({"SqlDialectInspection", "SqlNoDataSourceInspection"})
     @BeforeEach
-    void setUpJdbc() {
-        // Clear current DLQ
-        Connection connection = null;
-        try {
-            connection = dataSource.getConnection();
-            connection.setAutoCommit(false);
-            //noinspection SqlDialectInspection,SqlNoDataSourceInspection
-            connection.prepareStatement("DROP TABLE IF EXISTS " + schema.deadLetterTable())
-                      .executeUpdate();
-            connection.commit();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Unable to retrieve a Connection to drop the dead-letter queue", e);
-        } finally {
-            closeQuietly(connection);
-        }
-        // Construct new DLQ
+    void setUpJdbc() throws SQLException {
+        connection.prepareStatement("DROP TABLE IF EXISTS " + schema.deadLetterTable()).executeUpdate();
         joinAndUnwrap(jdbcDeadLetterQueue.createSchema(new GenericDeadLetterTableFactory(), null));
     }
 
     @AfterEach
     void tearDown() {
-        closeQuietly(sentinelConnection);
+        closeQuietly(connection);
     }
 
     @Override
@@ -337,9 +313,7 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
     void buildWithoutProcessingGroupThrowsAxonConfigurationException() {
         JdbcSequencedDeadLetterQueue.Builder<EventMessage> testBuilder =
                 JdbcSequencedDeadLetterQueue.builder()
-                                            .transactionalExecutorProvider(
-                                                    new JdbcTransactionalExecutorProvider(dataSource)
-                                            )
+                                            .transactionalExecutorProvider(pc -> executor)
                                             .statementFactory(mock(DeadLetterStatementFactory.class))
                                             .converter(mock(DeadLetterJdbcConverter.class));
 
@@ -364,9 +338,7 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
         JdbcSequencedDeadLetterQueue.Builder<EventMessage> testBuilder =
                 JdbcSequencedDeadLetterQueue.builder()
                                             .processingGroup(TEST_PROCESSING_GROUP)
-                                            .transactionalExecutorProvider(
-                                                    new JdbcTransactionalExecutorProvider(dataSource)
-                                            )
+                                            .transactionalExecutorProvider(pc -> executor)
                                             .converter(mock(DeadLetterJdbcConverter.class))
                                             .eventConverter(eventConverter);
 
@@ -379,9 +351,7 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
         JdbcSequencedDeadLetterQueue.Builder<EventMessage> testBuilder =
                 JdbcSequencedDeadLetterQueue.builder()
                                             .processingGroup(TEST_PROCESSING_GROUP)
-                                            .transactionalExecutorProvider(
-                                                    new JdbcTransactionalExecutorProvider(dataSource)
-                                            )
+                                            .transactionalExecutorProvider(pc -> executor)
                                             .converter(mock(DeadLetterJdbcConverter.class))
                                             .genericConverter(jacksonConverter);
 
@@ -394,9 +364,7 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
         JdbcSequencedDeadLetterQueue.Builder<EventMessage> testBuilder =
                 JdbcSequencedDeadLetterQueue.builder()
                                             .processingGroup(TEST_PROCESSING_GROUP)
-                                            .transactionalExecutorProvider(
-                                                    new JdbcTransactionalExecutorProvider(dataSource)
-                                            )
+                                            .transactionalExecutorProvider(pc -> executor)
                                             .statementFactory(mock(DeadLetterStatementFactory.class))
                                             .eventConverter(eventConverter);
 
@@ -409,9 +377,7 @@ class JdbcSequencedDeadLetterQueueTest extends SequencedDeadLetterQueueTest<Even
         JdbcSequencedDeadLetterQueue.Builder<EventMessage> testBuilder =
                 JdbcSequencedDeadLetterQueue.builder()
                                             .processingGroup(TEST_PROCESSING_GROUP)
-                                            .transactionalExecutorProvider(
-                                                    new JdbcTransactionalExecutorProvider(dataSource)
-                                            )
+                                            .transactionalExecutorProvider(pc -> executor)
                                             .statementFactory(mock(DeadLetterStatementFactory.class))
                                             .genericConverter(jacksonConverter);
 
