@@ -299,6 +299,7 @@ public class JdbcSequencedDeadLetterQueue<E extends EventMessage> implements Seq
                                                @Nullable ProcessingContext context) {
         return FutureUtils.runFailing(() -> {
             String sequenceId = toStringSequenceIdentifier(sequenceIdentifier);
+            logger.debug("Validating existence of sequence identifier [{}].", sequenceId);
             return sequenceSize(sequenceId, context).thenApply(result -> result > 0);
         });
     }
@@ -429,10 +430,11 @@ public class JdbcSequencedDeadLetterQueue<E extends EventMessage> implements Seq
             @Nullable ProcessingContext context
     ) {
         return FutureUtils.runFailing(() -> {
+            logger.debug("Received a request to process any dead letters.");
             Iterator<? extends JdbcDeadLetter<E>> iterator = findClaimableSequences(1, context);
             return claimFirstAvailableLetter(iterator, context).thenCompose(claimedLetter -> {
                 if (claimedLetter == null) {
-                    logger.info("No claimable dead letters found to process.");
+                    logger.debug("Received a request to process dead letters but there are no claimable sequences.");
                     return CompletableFuture.completedFuture(false);
                 }
                 return processLetterAndFollowing(claimedLetter, processingTask, context);
@@ -448,10 +450,12 @@ public class JdbcSequencedDeadLetterQueue<E extends EventMessage> implements Seq
             @Nullable ProcessingContext context
     ) {
         return FutureUtils.runFailing(() -> {
+            logger.debug("Received a request to process matching dead letters.");
             Iterator<? extends JdbcDeadLetter<E>> iterator = findClaimableSequences(10, context);
             return claimFirstMatchingLetter(iterator, sequenceFilter, context).thenCompose(claimedLetter -> {
                 if (claimedLetter == null) {
-                    logger.info("No claimable and/or matching dead letters found to process.");
+                    logger.debug("Received a request to process dead letters "
+                                         + "but there are no matching or claimable sequences.");
                     return CompletableFuture.completedFuture(false);
                 }
                 return processLetterAndFollowing(claimedLetter, processingTask, context);
