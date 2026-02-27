@@ -16,9 +16,11 @@
 
 package org.axonframework.messaging.eventhandling.deadletter.jdbc;
 
+import jakarta.annotation.Nonnull;
 import org.axonframework.common.IdentifierFactory;
 import org.axonframework.common.jdbc.JdbcException;
-import org.axonframework.common.jdbc.SingleConnectionTransactionalExecutor;
+import org.axonframework.common.tx.TransactionalExecutor;
+import org.axonframework.messaging.core.unitofwork.transaction.jdbc.JdbcTransactionalExecutorProvider;
 import org.hsqldb.jdbc.JDBCDataSource;
 import org.junit.jupiter.api.*;
 
@@ -27,7 +29,6 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 
@@ -44,18 +45,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class PagingJdbcIterableTest {
 
     private Connection connection;
-    private SingleConnectionTransactionalExecutor executor;
+    private TransactionalExecutor<Connection> executor;
     private PagingJdbcIterable<String> testSubject;
 
     @BeforeEach
     void setUp() throws SQLException {
-        JDBCDataSource dataSource = new JDBCDataSource();
-        dataSource.setUrl("jdbc:hsqldb:mem:pagingtest");
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
+        JDBCDataSource dataSource = dataSource();
 
         connection = dataSource.getConnection();
-        executor = new SingleConnectionTransactionalExecutor(connection);
+        executor = new JdbcTransactionalExecutorProvider(dataSource).getTransactionalExecutor(null);
 
         connection.prepareStatement("DROP TABLE IF EXISTS test_table").executeUpdate();
         connection.prepareStatement(
@@ -80,6 +78,15 @@ class PagingJdbcIterableTest {
         );
     }
 
+    @Nonnull
+    private static JDBCDataSource dataSource() {
+        JDBCDataSource dataSource = new JDBCDataSource();
+        dataSource.setUrl("jdbc:hsqldb:mem:pagingtest");
+        dataSource.setUser("sa");
+        dataSource.setPassword("");
+        return dataSource;
+    }
+
     @AfterEach
     void tearDown() {
         closeQuietly(connection);
@@ -91,7 +98,7 @@ class PagingJdbcIterableTest {
         addEntryAt(testId, 1);
 
         List<String> result = StreamSupport.stream(testSubject.spliterator(), false)
-                                           .collect(Collectors.toList());
+                                           .toList();
 
         assertEquals(1, result.size());
         assertEquals(testId, result.get(0));
@@ -101,11 +108,11 @@ class PagingJdbcIterableTest {
     void queriesMultiplePages() {
         List<String> expectedIds = IntStream.range(0, 102)
                                             .mapToObj(String::valueOf)
-                                            .collect(Collectors.toList());
+                                            .toList();
         expectedIds.forEach(expectedId -> addEntryAt(expectedId, Long.parseLong(expectedId)));
 
         List<String> result = StreamSupport.stream(testSubject.spliterator(), false)
-                                           .collect(Collectors.toList());
+                                           .toList();
 
         assertEquals(expectedIds.size(), result.size());
         expectedIds.forEach(resultId -> assertTrue(result.contains(resultId)));
