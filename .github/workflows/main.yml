@@ -25,7 +25,7 @@ jobs:
             sonar-enabled: false
             deploy-enabled: false
           - java-version: 25
-            sonar-enabled: true
+            sonar-enabled: false
             deploy-enabled: false
 
     steps:
