@@ -24,6 +24,9 @@ jobs:
           - java-version: 21
             sonar-enabled: false
             deploy-enabled: false
+          - java-version: 25
+            sonar-enabled: true
+            deploy-enabled: false
 
     steps:
       - name: Checkout code
